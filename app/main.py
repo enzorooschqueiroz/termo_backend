@@ -2,12 +2,13 @@ from flask import Flask, request, jsonify
 from app.db import get_connection
 from app.redis_client import r
 from app.models import create_tables_sql
+from datetime import datetime
 
 def create_app():
     app = Flask(__name__)
 
-    # Setup do banco - criar tabelas ao iniciar app
     def setup_db():
+        # Caso queira forçar criação local (opcional)
         pass
 
     setup_db()
@@ -17,17 +18,40 @@ def create_app():
         data = request.json
         nome = data.get('nome')
         tentativas = data.get('tentativas')
-        tempo = data.get('tempo')
+        tempo = data.get('tempo')  # tempo em segundos
 
         if not all([nome, tentativas, tempo]):
             return jsonify({'erro': 'Dados incompletos'}), 400
 
         conn = get_connection()
         cur = conn.cursor()
-        cur.execute(
-            "INSERT INTO jogadores (nome, tentativas, tempo) VALUES (%s, %s, %s)",
-            (nome, tentativas, tempo)
-        )
+
+        # 1. Verifica ou cria jogador
+        cur.execute("SELECT id FROM jogador WHERE nome = %s", (nome,))
+        jogador = cur.fetchone()
+        if jogador:
+            jogador_id = jogador[0]
+        else:
+            cur.execute("INSERT INTO jogador (nome) VALUES (%s) RETURNING id", (nome,))
+            jogador_id = cur.fetchone()[0]
+
+        # 2. Pega a última palavra do dia
+        cur.execute("SELECT id FROM palavra_dia ORDER BY criada_em DESC LIMIT 1")
+        palavra = cur.fetchone()
+        if not palavra:
+            conn.rollback()
+            cur.close()
+            conn.close()
+            return jsonify({'erro': 'Nenhuma palavra definida'}), 400
+
+        palavra_id = palavra[0]
+
+        # 3. Insere resultado
+        cur.execute("""
+            INSERT INTO resultado (jogador_id, palavra_id, tentativas, tempo_seg)
+            VALUES (%s, %s, %s, %s)
+        """, (jogador_id, palavra_id, tentativas, tempo))
+
         conn.commit()
         cur.close()
         conn.close()
@@ -44,16 +68,38 @@ def create_app():
         if not palavra:
             return jsonify({'erro': 'Palavra ausente'}), 400
 
+        # Grava no Redis para facilitar
         r.set("palavra_atual", palavra.lower())
+
+        # Salva no banco também
+        conn = get_connection()
+        cur = conn.cursor()
+        cur.execute("INSERT INTO palavra_dia (palavra) VALUES (%s)", (palavra.lower(),))
+        conn.commit()
+        cur.close()
+        conn.close()
+
         return jsonify({'mensagem': 'Palavra definida com sucesso'})
 
     @app.route('/palavra', methods=['GET'])
     def get_palavra():
-        palavra = r.get("palavra_atual")
-        # Redis retorna bytes, converte para string
-        if palavra:
-            palavra = palavra.decode('utf-8')
-        return jsonify({'palavra': palavra})
+        conn = get_connection()
+        cur = conn.cursor()
+
+        cur.execute("""
+            SELECT palavra FROM palavra_dia
+            ORDER BY criada_em DESC
+            LIMIT 1
+        """)
+        resultado = cur.fetchone()
+        
+        cur.close()
+        conn.close()
+
+        if resultado:
+            return jsonify({'palavra': resultado[0]})
+        else:
+            return jsonify({'erro': 'Nenhuma palavra definida ainda.'}), 404
 
     @app.route('/ranking', methods=['GET'])
     def ranking():
@@ -65,8 +111,10 @@ def create_app():
         conn = get_connection()
         cur = conn.cursor()
         cur.execute("""
-            SELECT nome, tentativas, tempo FROM jogadores
-            ORDER BY tentativas ASC, tempo ASC
+            SELECT j.nome, r.tentativas, r.tempo_seg
+            FROM resultado r
+            JOIN jogador j ON r.jogador_id = j.id
+            ORDER BY r.tentativas ASC, r.tempo_seg ASC
             LIMIT 10
         """)
         resultados = cur.fetchall()
@@ -77,7 +125,7 @@ def create_app():
             {"nome": nome, "tentativas": tentativas, "tempo": tempo}
             for nome, tentativas, tempo in resultados
         ]
-        r.set("ranking_top10", str(ranking_data), ex=300)  # cache por 5 min
+        r.set("ranking_top10", str(ranking_data), ex=300)
 
         return jsonify({'ranking': ranking_data})
 
@@ -86,6 +134,7 @@ def create_app():
         return jsonify({'status': 'ok'}), 200
 
     return app
+
 
 if __name__ == "__main__":
     app = create_app()
