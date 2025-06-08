@@ -1,0 +1,92 @@
+from flask import Flask, request, jsonify
+from app.db import get_connection
+from app.redis_client import r
+from app.models import create_tables_sql
+
+def create_app():
+    app = Flask(__name__)
+
+    # Setup do banco - criar tabelas ao iniciar app
+    def setup_db():
+        pass
+
+    setup_db()
+
+    @app.route('/resultado', methods=['POST'])
+    def registrar_resultado():
+        data = request.json
+        nome = data.get('nome')
+        tentativas = data.get('tentativas')
+        tempo = data.get('tempo')
+
+        if not all([nome, tentativas, tempo]):
+            return jsonify({'erro': 'Dados incompletos'}), 400
+
+        conn = get_connection()
+        cur = conn.cursor()
+        cur.execute(
+            "INSERT INTO jogadores (nome, tentativas, tempo) VALUES (%s, %s, %s)",
+            (nome, tentativas, tempo)
+        )
+        conn.commit()
+        cur.close()
+        conn.close()
+
+        r.delete("ranking_top10")  # limpa cache
+
+        return jsonify({'mensagem': 'Resultado registrado com sucesso!'})
+
+    @app.route('/palavra', methods=['POST'])
+    def definir_palavra():
+        data = request.json
+        palavra = data.get('palavra')
+
+        if not palavra:
+            return jsonify({'erro': 'Palavra ausente'}), 400
+
+        r.set("palavra_atual", palavra.lower())
+        return jsonify({'mensagem': 'Palavra definida com sucesso'})
+
+    @app.route('/palavra', methods=['GET'])
+    def get_palavra():
+        palavra = r.get("palavra_atual")
+        # Redis retorna bytes, converte para string
+        if palavra:
+            palavra = palavra.decode('utf-8')
+        return jsonify({'palavra': palavra})
+
+    @app.route('/ranking', methods=['GET'])
+    def ranking():
+        cache = r.get("ranking_top10")
+        if cache:
+            ranking_data = eval(cache.decode('utf-8'))
+            return jsonify({'ranking': ranking_data})
+
+        conn = get_connection()
+        cur = conn.cursor()
+        cur.execute("""
+            SELECT nome, tentativas, tempo FROM jogadores
+            ORDER BY tentativas ASC, tempo ASC
+            LIMIT 10
+        """)
+        resultados = cur.fetchall()
+        cur.close()
+        conn.close()
+
+        ranking_data = [
+            {"nome": nome, "tentativas": tentativas, "tempo": tempo}
+            for nome, tentativas, tempo in resultados
+        ]
+        r.set("ranking_top10", str(ranking_data), ex=300)  # cache por 5 min
+
+        return jsonify({'ranking': ranking_data})
+
+    @app.route('/health', methods=['GET'])
+    def health_check():
+        return jsonify({'status': 'ok'}), 200
+
+    return app
+
+if __name__ == "__main__":
+    app = create_app()
+    app.run(host="0.0.0.0", port=5003, debug=True)
