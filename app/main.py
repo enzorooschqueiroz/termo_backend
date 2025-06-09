@@ -106,11 +106,16 @@ def create_app():
 
     @app.route('/ranking', methods=['GET'])
     def ranking():
+        # Tenta buscar o ranking do cache Redis
         cache = r.get("ranking_top10")
         if cache:
-            ranking_data = json.loads(cache.decode('utf-8'))  # <- Agora vai funcionar
-            return jsonify({'ranking': ranking_data})
+            try:
+                ranking_data = json.loads(cache)  # converte a string JSON de volta para lista de dicionários
+                return jsonify({'ranking': ranking_data})
+            except json.JSONDecodeError:
+                pass  # se o cache estiver corrompido, ignora e gera novamente
 
+        # Caso não tenha cache ou esteja inválido, busca no banco de dados
         conn = get_connection()
         cur = conn.cursor()
         cur.execute("""
@@ -129,8 +134,8 @@ def create_app():
             for nome, tentativas, tempo in resultados
         ]
 
-        # Salvar como JSON válido
-        r.set("ranking_top10", json.dumps(ranking_data), ex=300)
+        # Armazena no Redis como string JSON com validade de 5 minutos
+        r.set("ranking_top10", json.dumps(ranking_data), ex=30)
 
         return jsonify({'ranking': ranking_data})
 
