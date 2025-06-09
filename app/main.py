@@ -3,9 +3,11 @@ from app.db import get_connection
 from app.redis_client import r
 from app.models import create_tables_sql
 from datetime import datetime
+from flask_cors import CORS
 
 def create_app():
     app = Flask(__name__)
+    CORS(app)  # Habilita CORS para todas as rotas
 
     def setup_db():
         # Caso queira forçar criação local (opcional)
