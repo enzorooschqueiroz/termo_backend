@@ -4,6 +4,7 @@ from app.redis_client import r
 from app.models import create_tables_sql
 from datetime import datetime
 from flask_cors import CORS
+import json
 
 def create_app():
     app = Flask(__name__)
@@ -107,7 +108,7 @@ def create_app():
     def ranking():
         cache = r.get("ranking_top10")
         if cache:
-            ranking_data = eval(cache.decode('utf-8'))
+            ranking_data = json.loads(cache)  # ✅ decode seguro
             return jsonify({'ranking': ranking_data})
 
         conn = get_connection()
@@ -127,7 +128,7 @@ def create_app():
             {"nome": nome, "tentativas": tentativas, "tempo": tempo}
             for nome, tentativas, tempo in resultados
         ]
-        r.set("ranking_top10", str(ranking_data), ex=300)
+        r.set("ranking_top10", json.dumps(ranking_data), ex=300)  # ✅ salvar como JSON
 
         return jsonify({'ranking': ranking_data})
 
