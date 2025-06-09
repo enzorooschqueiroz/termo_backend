@@ -108,7 +108,7 @@ def create_app():
     def ranking():
         cache = r.get("ranking_top10")
         if cache:
-            ranking_data = json.loads(cache)  # ✅ decode seguro
+            ranking_data = json.loads(cache.decode('utf-8'))  # <- Agora vai funcionar
             return jsonify({'ranking': ranking_data})
 
         conn = get_connection()
@@ -128,7 +128,9 @@ def create_app():
             {"nome": nome, "tentativas": tentativas, "tempo": tempo}
             for nome, tentativas, tempo in resultados
         ]
-        r.set("ranking_top10", json.dumps(ranking_data), ex=30)  # ✅ salvar como JSON
+
+        # Salvar como JSON válido
+        r.set("ranking_top10", json.dumps(ranking_data), ex=300)
 
         return jsonify({'ranking': ranking_data})
 
