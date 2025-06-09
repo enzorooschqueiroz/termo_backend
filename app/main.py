@@ -128,7 +128,7 @@ def create_app():
             {"nome": nome, "tentativas": tentativas, "tempo": tempo}
             for nome, tentativas, tempo in resultados
         ]
-        r.set("ranking_top10", json.dumps(ranking_data), ex=300)  # ✅ salvar como JSON
+        r.set("ranking_top10", json.dumps(ranking_data), ex=30)  # ✅ salvar como JSON
 
         return jsonify({'ranking': ranking_data})
 
